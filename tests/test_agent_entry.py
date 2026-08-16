@@ -12,6 +12,13 @@ class AgentEntryPolicyTests(unittest.TestCase):
         source = "alpha   \n beta\t\n"
         self.assertEqual(agent_entry.normalize_generated_text(source), "alpha\n beta\n")
 
+    def test_preserve_existing_crlf_style(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "app.py"
+            path.write_bytes(b"alpha\r\nbeta\r\n")
+            result = agent_entry.preserve_existing_newline_style(path, "alpha\ngamma\n")
+            self.assertEqual(result, "alpha\r\ngamma\r\n")
+
     def test_looks_like_test_path(self) -> None:
         self.assertTrue(agent_entry.looks_like_test_path("tests/test_api.py"))
         self.assertTrue(agent_entry.looks_like_test_path("test_main.py"))
@@ -26,6 +33,26 @@ class AgentEntryPolicyTests(unittest.TestCase):
         }
         self.assertEqual(agent_entry.unsafe_plan_paths(plan), [".gitignore"])
 
+    def test_complete_snapshot_never_truncates_a_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            agent_entry.core.run(["git", "init"], cwd=repo)
+            (repo / "README.md").write_text("x" * 500 + "\n", encoding="utf-8")
+            (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+            agent_entry.core.run(["git", "add", "README.md", "app.py"], cwd=repo)
+            snapshot = agent_entry.complete_snapshot_repository(
+                repo,
+                {
+                    "snapshot_max_files": 10,
+                    "snapshot_max_file_bytes": 1000,
+                    "snapshot_max_total_chars": 160,
+                },
+            )
+            self.assertNotIn("COMPLETE FILE: README.md", snapshot)
+            self.assertIn("COMPLETE FILE: app.py", snapshot)
+            self.assertIn("END FILE: app.py", snapshot)
+            self.assertIn("value = 1", snapshot)
+
     def test_detects_existing_test_infrastructure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -34,6 +61,22 @@ class AgentEntryPolicyTests(unittest.TestCase):
             (repo / "tests" / "test_smoke.py").write_text("def test_smoke():\n    assert True\n", encoding="utf-8")
             agent_entry.core.run(["git", "add", "tests/test_smoke.py"], cwd=repo)
             self.assertTrue(agent_entry.has_existing_test_infrastructure(repo))
+
+    def test_replacement_rejects_removed_python_symbols(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            path = repo / "app.py"
+            path.write_text(
+                "def keep():\n    return 1\n\ndef must_remain():\n    return 2\n",
+                encoding="utf-8",
+            )
+            reason = agent_entry.replacement_rejection_reason(
+                repo,
+                "app.py",
+                "def keep():\n    return 1\n",
+            )
+            self.assertIsNotNone(reason)
+            self.assertIn("must_remain", reason or "")
 
     def test_reviewer_rejects_new_test_suite_without_infrastructure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

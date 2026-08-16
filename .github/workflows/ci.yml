@@ -22,7 +22,7 @@ jobs:
           python-version: "3.12"
 
       - name: Compile
-        run: python -m py_compile agent.py
+        run: python -m py_compile agent.py agent_entry.py run_marschal.py
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v

@@ -1,0 +1,32 @@
+name: Marschal Tech Lead dry run
+
+on:
+  push:
+    paths:
+      - ".github/workflows/tech-lead-dry-run.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_AGENT_TOKEN: ${{ secrets.GH_AGENT_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_AGENT_TOKEN }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_MODEL: "openai/gpt-oss-120b"
+      TARGET_REPO: "organizations-api"
+      MARSCHAL_DRY_RUN: "true"
+    steps:
+      - name: Check out Marschal
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure GitHub authentication
+        run: gh auth setup-git
+      - name: Run Tech Lead dry validation
+        run: python run_marschal.py

@@ -1,0 +1,18 @@
+{
+  "owner": "Sonti22",
+  "model": "openai/gpt-oss-120b",
+  "max_changed_files": 3,
+  "max_total_changed_lines": 350,
+  "snapshot_max_files": 20,
+  "snapshot_max_file_bytes": 8000,
+  "snapshot_max_total_chars": 14000,
+  "max_output_file_bytes": 50000,
+  "targets": [
+    "notification-service",
+    "organizations-api",
+    "video-analysis-service",
+    "intrusion-detection",
+    "fastapi-crud-service",
+    "junior-dev-test-2025"
+  ]
+}

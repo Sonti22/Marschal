@@ -17,9 +17,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GH_AGENT_TOKEN }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       GROQ_MODEL: "openai/gpt-oss-120b"
-      TARGET_REPO: "organizations-api"
+      TARGET_REPO: "notification-service"
       MARSCHAL_DRY_RUN: "true"
-      MARSCHAL_POLICY_REV: "architecture-index-budget-v4"
+      MARSCHAL_POLICY_REV: "tech-lead-cross-project-v5"
     steps:
       - name: Check out Marschal
         uses: actions/checkout@v4

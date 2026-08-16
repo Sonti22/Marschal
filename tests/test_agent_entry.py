@@ -59,6 +59,26 @@ class AgentEntryPolicyTests(unittest.TestCase):
         reason = agent_entry.lead_quality_rejection_reason(plan)
         self.assertIsNotNone(reason)
 
+    def test_structural_index_exposes_cross_file_router_dependency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            agent_entry.core.run(["git", "init"], cwd=repo)
+            endpoint = repo / "app" / "api" / "v1" / "endpoints" / "organizations.py"
+            endpoint.parent.mkdir(parents=True)
+            endpoint.write_text(
+                "from fastapi import APIRouter, Depends\n"
+                "from app.core.security import verify_api_key\n\n"
+                "router = APIRouter(dependencies=[Depends(verify_api_key)])\n",
+                encoding="utf-8",
+            )
+            agent_entry.core.run(["git", "add", "app/api/v1/endpoints/organizations.py"], cwd=repo)
+            tracked = agent_entry.core.run(["git", "ls-files"], cwd=repo).splitlines()
+            index = agent_entry.build_structural_index(repo, tracked, 2000)
+            self.assertIn("app/api/v1/endpoints/organizations.py", index)
+            self.assertIn("verify_api_key", index)
+            self.assertIn("APIRouter(dependencies=[Depends(verify_api_key)])", index)
+            self.assertIn("DERIVED, READ-ONLY", index)
+
     def test_complete_snapshot_never_truncates_a_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -72,6 +92,7 @@ class AgentEntryPolicyTests(unittest.TestCase):
                     "snapshot_max_files": 10,
                     "snapshot_max_file_bytes": 1000,
                     "snapshot_max_total_chars": 160,
+                    "snapshot_index_max_chars": 1000,
                 },
             )
             self.assertNotIn("COMPLETE FILE: README.md", snapshot)

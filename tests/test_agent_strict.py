@@ -33,6 +33,27 @@ class StrictPolicyTests(unittest.TestCase):
         finally:
             agent_strict._LAST_SNAPSHOT_PATHS = old_paths
 
+    def test_new_unused_import_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "database.py"
+            path.write_text(
+                "from typing import Any\n\ndef get_db() -> Any:\n    return None\n",
+                encoding="utf-8",
+            )
+            generated = (
+                "from typing import NoReturn\n\n"
+                "def get_db() -> None:\n"
+                "    return None\n"
+            )
+            self.assertEqual(agent_strict.newly_unused_imports(path, generated), ["NoReturn"])
+
+    def test_used_new_import_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.py"
+            path.write_text("value = 1\n", encoding="utf-8")
+            generated = "from pathlib import Path\n\nROOT = Path('.')\n"
+            self.assertEqual(agent_strict.newly_unused_imports(path, generated), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -74,6 +74,10 @@ def strict_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[
             print(f"Strict reviewer rejected new file {rel}: autonomous file creation is disabled.")
             return []
 
+    # Git's default whitespace checker treats the CR byte in newly added CRLF
+    # lines as trailing whitespace on Linux. Mark CR-at-EOL as intentional so
+    # real trailing spaces are still caught without rewriting CRLF repositories.
+    core.run(["git", "config", "core.whitespace", "cr-at-eol"], cwd=repo_dir)
     return base.policy_validate_and_apply(repo_dir, plan, config)
 
 

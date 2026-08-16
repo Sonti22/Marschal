@@ -52,6 +52,14 @@ def strict_quality_rejection_reason(plan: dict) -> str | None:
     return base.lead_quality_rejection_reason(plan)
 
 
+def no_change_plan(reason: str) -> dict:
+    return {
+        "title": "No justified Tech Lead change",
+        "summary": reason,
+        "files": [],
+    }
+
+
 def imported_bindings(content: str) -> set[str]:
     tree = ast.parse(content)
     names: set[str] = set()
@@ -89,38 +97,37 @@ def newly_unused_imports(path: Path, generated_content: str) -> list[str]:
 
 
 def strict_groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
+    """Make exactly one model call; reject weak or ungrounded output instead of forcing a PR."""
     global _LAST_SNAPSHOT_PATHS
     _LAST_SNAPSHOT_PATHS = extract_snapshot_paths(snapshot)
 
-    plan = base.policy_groq_plan(repo_name, snapshot, config)
-    unseen = unseen_plan_paths(plan)
-    if not unseen:
-        return plan
-
-    print(
-        "Strict reviewer rejected paths not present as complete snapshot files: "
-        f"{', '.join(unseen)}. Requesting one grounded alternative."
-    )
-    feedback = (
-        "STRICT GROUNDING RULE: modify only an EXISTING path named in a COMPLETE FILE marker above. "
-        "Do not create any new file. The previous candidate used unavailable paths: "
-        f"{', '.join(unseen)}. Choose a DIFFERENT bounded high-leverage change grounded only in visible "
-        "complete files and meeting the Python Tech Lead / Software Architect quality bar, or return an empty files array."
-    )
-    alternative = base._ORIGINAL_GROQ_PLAN(
+    plan = base._ORIGINAL_GROQ_PLAN(
         repo_name,
-        snapshot + base._review_policy(feedback),
+        snapshot + base._review_policy(
+            "SINGLE-PASS RULE: this is your only planning attempt. Choose a grounded Tech-Lead-level change now, "
+            "or return an empty files array. Do not propose a placeholder task expecting a retry."
+        ),
         config,
     )
-    reason = strict_quality_rejection_reason(alternative)
-    if reason:
-        print(f"Strict Tech Lead gate rejected grounded alternative: {reason}. No change will be made.")
-        return {
-            "title": "No justified Tech Lead change",
-            "summary": reason,
-            "files": [],
-        }
-    return alternative
+
+    unsafe = base.unsafe_plan_paths(plan)
+    if unsafe:
+        reason = f"proposal uses protected paths: {', '.join(unsafe)}"
+        print(f"Strict Tech Lead gate rejected proposal: {reason}. No change will be made.")
+        return no_change_plan(reason)
+
+    unseen = unseen_plan_paths(plan)
+    if unseen:
+        reason = f"proposal uses paths not present as complete snapshot files: {', '.join(unseen)}"
+        print(f"Strict Tech Lead gate rejected proposal: {reason}. No change will be made.")
+        return no_change_plan(reason)
+
+    quality_reason = strict_quality_rejection_reason(plan)
+    if quality_reason:
+        print(f"Strict Tech Lead gate rejected proposal: {quality_reason}. No change will be made.")
+        return no_change_plan(quality_reason)
+
+    return plan
 
 
 def strict_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[str]:

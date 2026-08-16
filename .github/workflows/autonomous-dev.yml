@@ -60,5 +60,5 @@ jobs:
           git --version
           gh --version
 
-      - name: Run Marschal
-        run: python agent.py
+      - name: Run Marschal and watch PR checks
+        run: python run_marschal.py

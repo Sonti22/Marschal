@@ -5,7 +5,8 @@
   "max_total_changed_lines": 500,
   "snapshot_max_files": 28,
   "snapshot_max_file_bytes": 12000,
-  "snapshot_max_total_chars": 18000,
+  "snapshot_max_total_chars": 16000,
+  "snapshot_index_max_chars": 5000,
   "max_completion_tokens": 2200,
   "groq_max_attempts": 4,
   "max_output_file_bytes": 60000,
@@ -14,7 +15,6 @@
     "organizations-api",
     "video-analysis-service",
     "intrusion-detection",
-    "fastapi-crud-service",
-    "junior-dev-test-2025"
+    "fastapi-crud-service"
   ]
 }

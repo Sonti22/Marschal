@@ -19,6 +19,7 @@ jobs:
       GROQ_MODEL: "openai/gpt-oss-120b"
       TARGET_REPO: "fastapi-crud-service"
       MARSCHAL_DRY_RUN: "false"
+      MARSCHAL_POLICY_REV: "2"
     steps:
       - name: Check out Marschal
         uses: actions/checkout@v4

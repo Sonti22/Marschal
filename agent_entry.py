@@ -85,29 +85,49 @@ def preserve_existing_newline_style(path: Path, content: str) -> str:
     return content
 
 
+def snapshot_priority(raw_path: str) -> tuple[int, int, str]:
+    """Prefer architecture-relevant source files over prose when the context budget is tight."""
+    path = PurePosixPath(raw_path)
+    name = path.name.lower()
+    parts = {part.lower() for part in path.parts}
+
+    if name in {"pyproject.toml", "go.mod", "package.json"}:
+        rank = 0
+    elif name in {
+        "main.py",
+        "config.py",
+        "database.py",
+        "security.py",
+        "router.py",
+        "service.py",
+        "services.py",
+        "repository.py",
+        "repositories.py",
+        "models.py",
+        "schemas.py",
+    }:
+        rank = 1
+    elif path.suffix.lower() in {".py", ".go", ".ts", ".js"} and parts.intersection(
+        {"app", "src", "api", "core", "domain", "services", "service", "repositories", "repository"}
+    ):
+        rank = 2
+    elif "tests" in parts or name.startswith("test_") or name.endswith("_test.py"):
+        rank = 3
+    elif name in {"docker-compose.yml", "docker-compose.yaml", "dockerfile"}:
+        rank = 4
+    elif name == "readme.md" or path.suffix.lower() == ".md":
+        rank = 6
+    else:
+        rank = 5
+    return rank, len(path.parts), raw_path
+
+
 def complete_snapshot_repository(repo_dir: Path, config: dict) -> str:
     """Build a bounded snapshot without ever cutting a file in the middle."""
     tracked = core.run(["git", "ls-files"], cwd=repo_dir).splitlines()
     preferred = sorted(
         (p for p in tracked if core.is_safe_path(p)),
-        key=lambda p: (
-            0
-            if PurePosixPath(p).name.lower()
-            in {
-                "pyproject.toml",
-                "go.mod",
-                "package.json",
-                "readme.md",
-                "docker-compose.yml",
-                "docker-compose.yaml",
-                "main.py",
-                "config.py",
-                "database.py",
-            }
-            else 1,
-            p.count("/"),
-            p,
-        ),
+        key=snapshot_priority,
     )
 
     chunks: list[str] = []

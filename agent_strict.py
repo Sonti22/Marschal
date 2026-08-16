@@ -8,6 +8,17 @@ import agent_entry as base
 
 
 _LAST_SNAPSHOT_PATHS: set[str] = set()
+STRICT_TRIVIAL_TITLE_TERMS = (
+    "typing",
+    "type hint",
+    "readme",
+    "comment",
+    "format",
+    "rename",
+    "spelling",
+    "typo",
+    "cleanup imports",
+)
 
 
 def extract_snapshot_paths(snapshot: str) -> set[str]:
@@ -29,6 +40,16 @@ def unseen_plan_paths(plan: dict) -> list[str]:
         if rel and rel not in _LAST_SNAPSHOT_PATHS:
             unseen.append(rel)
     return unseen
+
+
+def strict_quality_rejection_reason(plan: dict) -> str | None:
+    if not plan.get("files"):
+        return None
+    title = str(plan.get("title", "")).lower()
+    for term in STRICT_TRIVIAL_TITLE_TERMS:
+        if term in title:
+            return f"title signals a low-leverage maintenance task: {term}"
+    return base.lead_quality_rejection_reason(plan)
 
 
 def imported_bindings(content: str) -> set[str]:
@@ -86,11 +107,20 @@ def strict_groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
         f"{', '.join(unseen)}. Choose a DIFFERENT bounded high-leverage change grounded only in visible "
         "complete files and meeting the Python Tech Lead / Software Architect quality bar, or return an empty files array."
     )
-    return base._ORIGINAL_GROQ_PLAN(
+    alternative = base._ORIGINAL_GROQ_PLAN(
         repo_name,
         snapshot + base._review_policy(feedback),
         config,
     )
+    reason = strict_quality_rejection_reason(alternative)
+    if reason:
+        print(f"Strict Tech Lead gate rejected grounded alternative: {reason}. No change will be made.")
+        return {
+            "title": "No justified Tech Lead change",
+            "summary": reason,
+            "files": [],
+        }
+    return alternative
 
 
 def strict_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[str]:
@@ -102,7 +132,7 @@ def strict_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[
         )
         return []
 
-    quality_reason = base.lead_quality_rejection_reason(plan)
+    quality_reason = strict_quality_rejection_reason(plan)
     if quality_reason:
         print(f"Tech Lead strict gate rejected proposal: {quality_reason}. No changes applied.")
         return []

@@ -21,13 +21,35 @@ class StrictPolicyTests(unittest.TestCase):
         finally:
             agent_strict._LAST_SNAPSHOT_PATHS = old_paths
 
+    def test_low_leverage_typing_title_is_rejected(self) -> None:
+        plan = {
+            "title": "Add proper request typing to exception handlers",
+            "summary": "Clarifies the API contract and improves static analysis.",
+            "files": [{"path": "app/main.py", "content": "value = 1\n"}],
+        }
+        reason = agent_strict.strict_quality_rejection_reason(plan)
+        self.assertIsNotNone(reason)
+        self.assertIn("low-leverage", reason or "")
+
+    def test_high_leverage_transaction_fix_is_allowed(self) -> None:
+        plan = {
+            "title": "Make retryable writes idempotent",
+            "summary": "Prevents duplicate database writes after transient failures and preserves consistency.",
+            "files": [{"path": "app/service.py", "content": "value = 1\n"}],
+        }
+        self.assertIsNone(agent_strict.strict_quality_rejection_reason(plan))
+
     def test_new_file_is_rejected_even_if_named_in_snapshot_state(self) -> None:
         old_paths = set(agent_strict._LAST_SNAPSHOT_PATHS)
         try:
             agent_strict._LAST_SNAPSHOT_PATHS = {"new.py"}
             with tempfile.TemporaryDirectory() as tmp:
                 repo = Path(tmp)
-                plan = {"files": [{"path": "new.py", "content": "value = 1\n"}]}
+                plan = {
+                    "title": "Harden database transaction retries",
+                    "summary": "Improves transaction reliability and consistency.",
+                    "files": [{"path": "new.py", "content": "value = 1\n"}],
+                }
                 self.assertEqual(agent_strict.strict_validate_and_apply(repo, plan, {}), [])
                 self.assertFalse((repo / "new.py").exists())
         finally:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import agent_strict
 
@@ -38,6 +39,38 @@ class StrictPolicyTests(unittest.TestCase):
             "files": [{"path": "app/service.py", "content": "value = 1\n"}],
         }
         self.assertIsNone(agent_strict.strict_quality_rejection_reason(plan))
+
+    def test_single_pass_turns_weak_plan_into_noop(self) -> None:
+        snapshot = (
+            "\n--- COMPLETE FILE: app/main.py ---\n"
+            "value = 1\n"
+            "--- END FILE: app/main.py ---\n"
+        )
+        weak_plan = {
+            "title": "Fix README typo",
+            "summary": "Correct a spelling issue.",
+            "files": [{"path": "app/main.py", "content": "value = 1\n"}],
+        }
+        with patch.object(agent_strict.base, "_ORIGINAL_GROQ_PLAN", return_value=weak_plan) as model_call:
+            plan = agent_strict.strict_groq_plan("demo", snapshot, {})
+        self.assertEqual(plan["files"], [])
+        self.assertEqual(model_call.call_count, 1)
+
+    def test_single_pass_rejects_unseen_file_without_retry(self) -> None:
+        snapshot = (
+            "\n--- COMPLETE FILE: app/main.py ---\n"
+            "value = 1\n"
+            "--- END FILE: app/main.py ---\n"
+        )
+        unseen_plan = {
+            "title": "Make database retries idempotent",
+            "summary": "Prevents duplicate writes during transient database failures.",
+            "files": [{"path": "app/service.py", "content": "value = 1\n"}],
+        }
+        with patch.object(agent_strict.base, "_ORIGINAL_GROQ_PLAN", return_value=unseen_plan) as model_call:
+            plan = agent_strict.strict_groq_plan("demo", snapshot, {})
+        self.assertEqual(plan["files"], [])
+        self.assertEqual(model_call.call_count, 1)
 
     def test_new_file_is_rejected_even_if_named_in_snapshot_state(self) -> None:
         old_paths = set(agent_strict._LAST_SNAPSHOT_PATHS)

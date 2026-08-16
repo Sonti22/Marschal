@@ -9,6 +9,56 @@ import agent as core
 _ORIGINAL_GROQ_PLAN = core.groq_plan
 _ORIGINAL_VALIDATE_AND_APPLY = core.validate_and_apply_plan
 
+LEAD_IMPACT_TERMS = {
+    "architecture",
+    "async",
+    "atomic",
+    "auth",
+    "backpressure",
+    "cache",
+    "concurr",
+    "connection",
+    "consisten",
+    "contract",
+    "correctness",
+    "database",
+    "deadlock",
+    "failure",
+    "idempot",
+    "index",
+    "latency",
+    "lock",
+    "logging",
+    "memory",
+    "metric",
+    "migration",
+    "observability",
+    "pagination",
+    "performance",
+    "query",
+    "queue",
+    "race",
+    "reliab",
+    "resilien",
+    "resource",
+    "retry",
+    "security",
+    "serialization",
+    "session",
+    "timeout",
+    "transaction",
+    "validation",
+}
+TRIVIAL_TERMS = {
+    "comment",
+    "format",
+    "readme typo",
+    "rename variable",
+    "spelling",
+    "style only",
+    "typo",
+}
+
 
 def normalize_generated_text(content: str) -> str:
     """Remove trailing spaces/tabs and normalize generated text to LF internally."""
@@ -41,7 +91,20 @@ def complete_snapshot_repository(repo_dir: Path, config: dict) -> str:
     preferred = sorted(
         (p for p in tracked if core.is_safe_path(p)),
         key=lambda p: (
-            0 if PurePosixPath(p).name.lower() in {"readme.md", "pyproject.toml", "package.json", "go.mod"} else 1,
+            0
+            if PurePosixPath(p).name.lower()
+            in {
+                "pyproject.toml",
+                "go.mod",
+                "package.json",
+                "readme.md",
+                "docker-compose.yml",
+                "docker-compose.yaml",
+                "main.py",
+                "config.py",
+                "database.py",
+            }
+            else 1,
             p.count("/"),
             p,
         ),
@@ -115,6 +178,29 @@ def unsafe_plan_paths(plan: dict) -> list[str]:
     return unsafe
 
 
+def lead_quality_rejection_reason(plan: dict) -> str | None:
+    files = [item for item in plan.get("files", []) if isinstance(item, dict)]
+    if not files:
+        return None
+
+    title = str(plan.get("title", ""))
+    summary = str(plan.get("summary", ""))
+    text = f"{title} {summary}".lower()
+    has_impact = any(term in text for term in LEAD_IMPACT_TERMS)
+    has_trivial_signal = any(term in text for term in TRIVIAL_TERMS)
+
+    suffixes = {PurePosixPath(str(item.get("path", ""))).suffix.lower() for item in files}
+    docs_only = bool(suffixes) and suffixes.issubset({".md", ".txt"})
+
+    if has_trivial_signal and not has_impact:
+        return "proposal is cosmetic or maintenance-only without production impact"
+    if docs_only and not has_impact:
+        return "documentation-only proposal does not demonstrate an architecture or production concern"
+    if not has_impact:
+        return "summary does not identify a concrete production, architecture, reliability, security, data, or performance impact"
+    return None
+
+
 def python_top_level_symbols(content: str) -> set[str]:
     tree = ast.parse(content)
     return {
@@ -160,15 +246,27 @@ def replacement_rejection_reason(repo_dir: Path, rel: str, content: str) -> str 
 def _review_policy(extra: str = "") -> str:
     policy = """
 
---- MARSCHAL REVIEW POLICY ---
+--- MARSCHAL PYTHON TECH LEAD / SOFTWARE ARCHITECT POLICY ---
+ROLE AND QUALITY BAR
+- Operate as a Python Tech Lead / Software Architect focused on Backend, Distributed Systems and production AI systems.
+- Select ONE bounded, reviewable change with the highest engineering leverage visible in the snapshot. Bounded does not mean trivial.
+- Prefer evidence-backed improvements to transaction boundaries, idempotency, async/concurrency correctness, API contracts, validation, data consistency, database access, failure handling, retries/timeouts, resource lifecycle, security, observability, performance, backpressure, caching, or service boundaries.
+- For AI-related repositories, prefer production concerns such as model/provider abstraction, timeouts, retries, structured outputs, rate limits, evaluation hooks, observability, safe fallbacks and deterministic tests. Do not add AI merely to make a project look advanced.
+- Think about failure modes, ownership boundaries, invariants and operational consequences before proposing code.
+- The PR title and summary must state the concrete production/architecture impact and be grounded in code visible in the snapshot.
+- Reject cosmetic churn, typo-only edits, comment-only edits, style-only refactors, arbitrary renaming, fake complexity, resume-padding architecture, speculative microservices, or technology additions without evidence.
+- A small fix is acceptable only when it addresses a real senior-level concern (for example a transaction bug, race, resource leak, unsafe retry, broken validation or contract violation).
+- If the snapshot is insufficient to justify a Tech-Lead-level change, return an empty files array instead of inventing context.
+
+SAFETY AND REVIEW
 - Every file shown in the repository snapshot is COMPLETE and ends with an explicit END FILE marker. Never assume that a shown file is truncated.
 - Never emit trailing whitespace.
 - Never modify .gitignore, .gitattributes, editor configuration, hidden dotfiles, lock files, CI/workflow files, secrets, or environment files.
 - Preserve all existing top-level functions and classes unless the task explicitly proves one is obsolete; for autonomous maintenance, prefer not to remove them at all.
 - Do not introduce a new test suite into a repository that has no visible test infrastructure.
 - Do not rely on undeclared third-party test/runtime dependencies.
-- If a safe improvement would require adding dependencies or bootstrapping CI/test tooling, choose a different small improvement or return an empty files array.
-- Prefer an existing-file bug fix, validation/reliability fix, or a precise documentation correction over speculative scaffolding.
+- If a safe improvement would require adding dependencies or bootstrapping CI/test tooling, choose a different high-value improvement or return an empty files array.
+- Prefer changes that fit existing abstractions and conventions instead of broad rewrites.
 - Every returned path must satisfy the repository safety policy; if unsure, return an empty files array.
 --- END POLICY ---
 """
@@ -180,23 +278,38 @@ def _review_policy(extra: str = "") -> str:
 def policy_groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
     plan = _ORIGINAL_GROQ_PLAN(repo_name, snapshot + _review_policy(), config)
     unsafe = unsafe_plan_paths(plan)
-    if not unsafe:
-        return plan
+    if unsafe:
+        paths = ", ".join(unsafe)
+        print(f"Reviewer preflight rejected protected paths: {paths}. Requesting one safer alternative.")
+        feedback = (
+            "The previous candidate was rejected because it used protected or unsupported paths: "
+            f"{paths}. Produce a DIFFERENT bounded high-leverage improvement using only ordinary safe source files. "
+            "Do not return any dotfile. If no such Tech-Lead-level change is justified, return an empty files array."
+        )
+        plan = _ORIGINAL_GROQ_PLAN(repo_name, snapshot + _review_policy(feedback), config)
 
-    paths = ", ".join(unsafe)
-    print(f"Reviewer preflight rejected protected paths: {paths}. Requesting one safer alternative.")
-    feedback = (
-        "The previous candidate was rejected because it used protected or unsupported paths: "
-        f"{paths}. Produce a DIFFERENT small improvement using only ordinary safe source/documentation files. "
-        "Do not return any dotfile. If no such change is justified, return an empty files array."
-    )
-    return _ORIGINAL_GROQ_PLAN(repo_name, snapshot + _review_policy(feedback), config)
+    quality_reason = lead_quality_rejection_reason(plan)
+    if quality_reason:
+        print(f"Tech Lead quality gate rejected proposal: {quality_reason}. Requesting one stronger alternative.")
+        feedback = (
+            f"The previous proposal was rejected because {quality_reason}. Select a DIFFERENT change with concrete "
+            "production impact in backend architecture, distributed-systems correctness, reliability, security, "
+            "data consistency, observability or performance. Ground every claim in visible code. If none exists, "
+            "return an empty files array."
+        )
+        plan = _ORIGINAL_GROQ_PLAN(repo_name, snapshot + _review_policy(feedback), config)
+    return plan
 
 
 def policy_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[str]:
     unsafe = unsafe_plan_paths(plan)
     if unsafe:
         print(f"Reviewer gate rejected protected paths: {', '.join(unsafe)}. No changes applied.")
+        return []
+
+    quality_reason = lead_quality_rejection_reason(plan)
+    if quality_reason:
+        print(f"Tech Lead quality gate rejected proposal: {quality_reason}. No changes applied.")
         return []
 
     files = plan.get("files", [])

@@ -5,9 +5,9 @@
   "max_total_changed_lines": 500,
   "snapshot_max_files": 28,
   "snapshot_max_file_bytes": 12000,
-  "snapshot_max_total_chars": 15000,
-  "snapshot_index_max_chars": 4500,
-  "max_completion_tokens": 1600,
+  "snapshot_max_total_chars": 14500,
+  "snapshot_index_max_chars": 4000,
+  "max_completion_tokens": 1900,
   "groq_max_attempts": 4,
   "max_output_file_bytes": 60000,
   "targets": [

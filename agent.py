@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tempfile
+import time
 import urllib.error
 import urllib.request
 
@@ -142,6 +143,19 @@ def snapshot_repository(repo_dir: Path, config: dict) -> str:
     return "".join(chunks)
 
 
+def _groq_retry_delay(exc: urllib.error.HTTPError, detail: str, attempt: int) -> float:
+    header = exc.headers.get("Retry-After") if exc.headers else None
+    if header:
+        try:
+            return min(max(float(header), 1.0), 90.0)
+        except ValueError:
+            pass
+    match = re.search(r"try again in\s+([0-9.]+)s", detail, flags=re.IGNORECASE)
+    if match:
+        return min(max(float(match.group(1)) + 1.0, 1.0), 90.0)
+    return min(2.0 ** attempt * 5.0, 60.0)
+
+
 def groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
@@ -189,28 +203,46 @@ Repository snapshot:
                 {"role": "user", "content": user},
             ],
             "temperature": 0.15,
-            "max_completion_tokens": 3500,
+            "max_completion_tokens": int(config.get("max_completion_tokens", 1800)),
             "response_format": {"type": "json_object"},
         }
     ).encode("utf-8")
-    request = urllib.request.Request(
-        GROQ_URL,
-        data=payload,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "Marschal/1.0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:1000]
-        raise RuntimeError(f"Groq API returned HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Groq API request failed: {exc.reason}") from exc
+
+    max_attempts = max(1, int(config.get("groq_max_attempts", 4)))
+    body: dict | None = None
+    for attempt in range(1, max_attempts + 1):
+        request = urllib.request.Request(
+            GROQ_URL,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Marschal/1.1",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:1500]
+            if exc.code == 429 and attempt < max_attempts:
+                delay = _groq_retry_delay(exc, detail, attempt)
+                print(f"Groq rate limit reached; retrying in {delay:.1f}s ({attempt}/{max_attempts}).")
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"Groq API returned HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            if attempt < max_attempts:
+                delay = min(2.0 ** attempt, 15.0)
+                print(f"Groq network error; retrying in {delay:.1f}s ({attempt}/{max_attempts}).")
+                time.sleep(delay)
+                continue
+            raise RuntimeError(f"Groq API request failed: {exc.reason}") from exc
+
+    if body is None:
+        raise RuntimeError("Groq API did not return a response")
 
     content = body["choices"][0]["message"]["content"]
     plan = json.loads(content)

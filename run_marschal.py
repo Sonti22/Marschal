@@ -10,7 +10,7 @@ PR_RE = re.compile(r"Created PR:\s+(https://github\.com/\S+/pull/\d+)")
 
 def main() -> int:
     agent = subprocess.run(
-        [sys.executable, "agent_entry.py"],
+        [sys.executable, "agent_strict.py"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

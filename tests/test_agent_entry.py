@@ -33,6 +33,32 @@ class AgentEntryPolicyTests(unittest.TestCase):
         }
         self.assertEqual(agent_entry.unsafe_plan_paths(plan), [".gitignore"])
 
+    def test_lead_quality_accepts_production_reliability_change(self) -> None:
+        plan = {
+            "title": "Make database retries idempotent",
+            "summary": "Prevents duplicate writes during retryable database failures and improves consistency.",
+            "files": [{"path": "app/service.py", "content": "value = 1\n"}],
+        }
+        self.assertIsNone(agent_entry.lead_quality_rejection_reason(plan))
+
+    def test_lead_quality_rejects_cosmetic_change(self) -> None:
+        plan = {
+            "title": "Fix README typo",
+            "summary": "Correct a spelling issue.",
+            "files": [{"path": "README.md", "content": "text\n"}],
+        }
+        reason = agent_entry.lead_quality_rejection_reason(plan)
+        self.assertIsNotNone(reason)
+
+    def test_lead_quality_rejects_unsubstantiated_docs_only_change(self) -> None:
+        plan = {
+            "title": "Improve documentation",
+            "summary": "Add more examples for developers.",
+            "files": [{"path": "README.md", "content": "examples\n"}],
+        }
+        reason = agent_entry.lead_quality_rejection_reason(plan)
+        self.assertIsNotNone(reason)
+
     def test_complete_snapshot_never_truncates_a_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -84,7 +110,11 @@ class AgentEntryPolicyTests(unittest.TestCase):
             agent_entry.core.run(["git", "init"], cwd=repo)
             (repo / "README.md").write_text("demo\n", encoding="utf-8")
             agent_entry.core.run(["git", "add", "README.md"], cwd=repo)
-            plan = {"files": [{"path": "tests/test_api.py", "content": "def test_api():\n    assert True\n"}]}
+            plan = {
+                "title": "Validate API transaction behavior",
+                "summary": "Adds coverage for transaction rollback correctness.",
+                "files": [{"path": "tests/test_api.py", "content": "def test_api():\n    assert True\n"}],
+            }
             self.assertEqual(agent_entry.policy_validate_and_apply(repo, plan, {}), [])
             self.assertFalse((repo / "tests" / "test_api.py").exists())
 
@@ -92,7 +122,11 @@ class AgentEntryPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             agent_entry.core.run(["git", "init"], cwd=repo)
-            plan = {"files": [{"path": ".gitignore", "content": "*.db\n"}]}
+            plan = {
+                "title": "Harden database reliability",
+                "summary": "Improves database retry reliability.",
+                "files": [{"path": ".gitignore", "content": "*.db\n"}],
+            }
             self.assertEqual(agent_entry.policy_validate_and_apply(repo, plan, {}), [])
             self.assertFalse((repo / ".gitignore").exists())
 

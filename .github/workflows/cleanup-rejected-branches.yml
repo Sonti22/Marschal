@@ -1,0 +1,26 @@
+name: Cleanup rejected Marschal branches
+
+on:
+  push:
+    paths:
+      - ".github/workflows/cleanup-rejected-branches.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GH_AGENT_TOKEN }}
+    steps:
+      - name: Delete branches from rejected PRs
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --method DELETE repos/Sonti22/fastapi-crud-service/git/refs/heads/marschal/20260816-195845 || true
+          gh api --method DELETE repos/Sonti22/organizations-api/git/refs/heads/marschal/20260816-200349 || true
+          gh api --method DELETE repos/Sonti22/organizations-api/git/refs/heads/marschal/20260816-200626 || true
+          gh api --method DELETE repos/Sonti22/organizations-api/git/refs/heads/marschal/20260816-201132 || true
+          echo "Rejected PR branches cleanup finished."

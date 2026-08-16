@@ -83,8 +83,8 @@ def strict_groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
     feedback = (
         "STRICT GROUNDING RULE: modify only an EXISTING path named in a COMPLETE FILE marker above. "
         "Do not create any new file. The previous candidate used unavailable paths: "
-        f"{', '.join(unseen)}. Choose a different small change grounded only in visible complete files, "
-        "or return an empty files array."
+        f"{', '.join(unseen)}. Choose a DIFFERENT bounded high-leverage change grounded only in visible "
+        "complete files and meeting the Python Tech Lead / Software Architect quality bar, or return an empty files array."
     )
     return base._ORIGINAL_GROQ_PLAN(
         repo_name,
@@ -100,6 +100,11 @@ def strict_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[
             "Strict reviewer rejected paths not fully observed in the snapshot: "
             f"{', '.join(unseen)}. No changes applied."
         )
+        return []
+
+    quality_reason = base.lead_quality_rejection_reason(plan)
+    if quality_reason:
+        print(f"Tech Lead strict gate rejected proposal: {quality_reason}. No changes applied.")
         return []
 
     for item in plan.get("files", []):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import agent as core
@@ -28,6 +29,42 @@ def unseen_plan_paths(plan: dict) -> list[str]:
         if rel and rel not in _LAST_SNAPSHOT_PATHS:
             unseen.append(rel)
     return unseen
+
+
+def imported_bindings(content: str) -> set[str]:
+    tree = ast.parse(content)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(node, ast.ImportFrom) and node.module != "__future__":
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+    return names
+
+
+def referenced_names(content: str) -> set[str]:
+    tree = ast.parse(content)
+    return {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+
+
+def newly_unused_imports(path: Path, generated_content: str) -> list[str]:
+    if path.suffix != ".py" or not path.is_file():
+        return []
+    try:
+        old_content = path.read_text(encoding="utf-8")
+        old_imports = imported_bindings(old_content)
+        new_imports = imported_bindings(generated_content)
+        used = referenced_names(generated_content)
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return []
+    return sorted(name for name in (new_imports - old_imports) if name not in used)
 
 
 def strict_groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
@@ -70,9 +107,19 @@ def strict_validate_and_apply(repo_dir: Path, plan: dict, config: dict) -> list[
             print("Strict reviewer rejected an invalid plan item. No changes applied.")
             return []
         rel = str(item.get("path", "")).strip()
-        if not (repo_dir / rel).is_file():
+        path = repo_dir / rel
+        if not path.is_file():
             print(f"Strict reviewer rejected new file {rel}: autonomous file creation is disabled.")
             return []
+        content = item.get("content")
+        if isinstance(content, str):
+            unused = newly_unused_imports(path, content)
+            if unused:
+                print(
+                    f"Strict reviewer rejected {rel}: newly introduced unused imports: "
+                    f"{', '.join(unused)}. No changes applied."
+                )
+                return []
 
     # Git's default whitespace checker treats the CR byte in newly added CRLF
     # lines as trailing whitespace on Linux. Mark CR-at-EOL as intentional so

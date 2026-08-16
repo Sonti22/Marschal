@@ -58,6 +58,21 @@ TRIVIAL_TERMS = {
     "style only",
     "typo",
 }
+ARCHITECTURE_SIGNAL_TOKENS = (
+    "APIRouter(",
+    "include_router(",
+    "Depends(",
+    "create_async_engine(",
+    "async_sessionmaker(",
+    "BaseSettings",
+    "Redis(",
+    "Kafka",
+    "Celery(",
+    "AsyncClient(",
+    "ClientSession(",
+    "lifespan",
+    "middleware",
+)
 
 
 def normalize_generated_text(content: str) -> str:
@@ -122,12 +137,103 @@ def snapshot_priority(raw_path: str) -> tuple[int, int, str]:
     return rank, len(path.parts), raw_path
 
 
+def _python_structure_summary(content: str) -> str | None:
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None
+
+    imports: list[str] = []
+    symbols: list[str] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.append(node.module)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            symbols.append(node.name)
+
+    local_imports = [
+        name
+        for name in imports
+        if name.startswith(("app", "src", "core", "api", "domain", "services", "repositories"))
+    ]
+    if not local_imports:
+        local_imports = imports[:6]
+    else:
+        local_imports = local_imports[:8]
+
+    signals: list[str] = []
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or len(signals) >= 4:
+            continue
+        if any(token in line for token in ARCHITECTURE_SIGNAL_TOKENS):
+            signals.append(line[:220])
+
+    parts: list[str] = []
+    if local_imports:
+        parts.append("imports=" + ",".join(local_imports))
+    if symbols:
+        parts.append("symbols=" + ",".join(symbols[:12]))
+    if signals:
+        parts.append("signals=" + " || ".join(signals))
+    return "; ".join(parts) if parts else None
+
+
+def build_structural_index(repo_dir: Path, tracked: list[str], max_chars: int) -> str:
+    """Build a compact read-only architecture map across Python files."""
+    if max_chars <= 0:
+        return ""
+
+    lines = [
+        "\n--- REPOSITORY STRUCTURAL INDEX (DERIVED, READ-ONLY) ---",
+        "Use this index for cross-file reasoning. A path listed only here is NOT editable unless it also appears as a COMPLETE FILE below.",
+    ]
+    total = sum(len(line) + 1 for line in lines)
+
+    candidates = sorted(
+        (p for p in tracked if p.endswith(".py") and core.is_safe_path(p)),
+        key=snapshot_priority,
+    )
+    for rel in candidates:
+        path = repo_dir / rel
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if len(data) > 100_000 or b"\x00" in data:
+            continue
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        summary = _python_structure_summary(text)
+        if not summary:
+            continue
+        line = f"- {rel} | {summary}"
+        if total + len(line) + 1 > max_chars:
+            continue
+        lines.append(line)
+        total += len(line) + 1
+
+    lines.append("--- END STRUCTURAL INDEX ---\n")
+    return "\n".join(lines)
+
+
 def complete_snapshot_repository(repo_dir: Path, config: dict) -> str:
-    """Build a bounded snapshot without ever cutting a file in the middle."""
+    """Build architecture index plus bounded complete-file context without truncation."""
     tracked = core.run(["git", "ls-files"], cwd=repo_dir).splitlines()
     preferred = sorted(
         (p for p in tracked if core.is_safe_path(p)),
         key=snapshot_priority,
+    )
+
+    index = build_structural_index(
+        repo_dir,
+        tracked,
+        int(config.get("snapshot_index_max_chars", 0)),
     )
 
     chunks: list[str] = []
@@ -163,7 +269,7 @@ def complete_snapshot_repository(repo_dir: Path, config: dict) -> str:
 
     if not chunks:
         raise RuntimeError("No complete safe text files fit in the repository snapshot budget")
-    return "".join(chunks)
+    return index + "".join(chunks)
 
 
 def has_existing_test_infrastructure(repo_dir: Path) -> bool:
@@ -273,13 +379,15 @@ ROLE AND QUALITY BAR
 - Prefer evidence-backed improvements to transaction boundaries, idempotency, async/concurrency correctness, API contracts, validation, data consistency, database access, failure handling, retries/timeouts, resource lifecycle, security, observability, performance, backpressure, caching, or service boundaries.
 - For AI-related repositories, prefer production concerns such as model/provider abstraction, timeouts, retries, structured outputs, rate limits, evaluation hooks, observability, safe fallbacks and deterministic tests. Do not add AI merely to make a project look advanced.
 - Think about failure modes, ownership boundaries, invariants and operational consequences before proposing code.
+- Use the REPOSITORY STRUCTURAL INDEX to detect cross-file relationships and existing implementations. Before adding a global/cross-cutting mechanism, verify it is not already enforced in lower-level routers/services/dependencies. Do not duplicate architecture that already exists.
+- The structural index is derived read-only context. Never edit a file based only on the index; a file is editable only if it also has a COMPLETE FILE marker.
 - The PR title and summary must state the concrete production/architecture impact and be grounded in code visible in the snapshot.
 - Reject cosmetic churn, typo-only edits, comment-only edits, style-only refactors, arbitrary renaming, fake complexity, resume-padding architecture, speculative microservices, or technology additions without evidence.
 - A small fix is acceptable only when it addresses a real senior-level concern (for example a transaction bug, race, resource leak, unsafe retry, broken validation or contract violation).
 - If the snapshot is insufficient to justify a Tech-Lead-level change, return an empty files array instead of inventing context.
 
 SAFETY AND REVIEW
-- Every file shown in the repository snapshot is COMPLETE and ends with an explicit END FILE marker. Never assume that a shown file is truncated.
+- Every file shown with a COMPLETE FILE marker is complete and ends with an explicit END FILE marker. Never assume that such a file is truncated.
 - Never emit trailing whitespace.
 - Never modify .gitignore, .gitattributes, editor configuration, hidden dotfiles, lock files, CI/workflow files, secrets, or environment files.
 - Preserve all existing top-level functions and classes unless the task explicitly proves one is obsolete; for autonomous maintenance, prefer not to remove them at all.
@@ -314,8 +422,8 @@ def policy_groq_plan(repo_name: str, snapshot: str, config: dict) -> dict:
         feedback = (
             f"The previous proposal was rejected because {quality_reason}. Select a DIFFERENT change with concrete "
             "production impact in backend architecture, distributed-systems correctness, reliability, security, "
-            "data consistency, observability or performance. Ground every claim in visible code. If none exists, "
-            "return an empty files array."
+            "data consistency, observability or performance. Ground every claim in visible code and cross-check the "
+            "structural index for existing implementations. If none exists, return an empty files array."
         )
         plan = _ORIGINAL_GROQ_PLAN(repo_name, snapshot + _review_policy(feedback), config)
     return plan

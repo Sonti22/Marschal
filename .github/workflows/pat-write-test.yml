@@ -1,0 +1,35 @@
+name: Marschal PAT write test
+
+on:
+  push:
+    paths:
+      - ".github/workflows/pat-write-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_AGENT_TOKEN: ${{ secrets.GH_AGENT_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_AGENT_TOKEN }}
+    steps:
+      - name: Verify token
+        run: test -n "$GH_AGENT_TOKEN"
+      - name: Clone target and push/delete temporary branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          TMPDIR=$(mktemp -d)
+          gh repo clone Sonti22/notification-service "$TMPDIR/repo" -- --depth=1
+          cd "$TMPDIR/repo"
+          git config user.name "Sonti22"
+          git config user.email "162977312+Sonti22@users.noreply.github.com"
+          BRANCH="marschal/pat-write-test-${GITHUB_RUN_ID}"
+          git checkout -b "$BRANCH"
+          git push -u origin "$BRANCH"
+          git push origin --delete "$BRANCH"
+          echo "PAT write test passed."

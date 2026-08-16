@@ -19,7 +19,7 @@ jobs:
       GROQ_MODEL: "openai/gpt-oss-120b"
       TARGET_REPO: "organizations-api"
       MARSCHAL_DRY_RUN: "false"
-      MARSCHAL_POLICY_REV: "5"
+      MARSCHAL_POLICY_REV: "6"
     steps:
       - name: Check out Marschal
         uses: actions/checkout@v4
